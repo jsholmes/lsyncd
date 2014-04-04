@@ -184,7 +184,7 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 			atype
 		);
 
-		exit(-1); // ERRNO
+		return;
 	}
 
 	{
@@ -254,12 +254,12 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 
 	if (etype) {
 		if (!path) {
-			printlogf(L, "Error", "Internal fail, fsevents, no path.");
-			exit(-1);
+			printlogf(L, "Error", "Internal fail, fsevents, no path. etype %s", etype);
+			return;
 		}
 		if (isdir < 0) {
-			printlogf(L, "Error", "Internal fail, fsevents, neither dir nor file.");
-			exit(-1);
+			printlogf(L, "Error", "Internal fail, fsevents, neither dir nor file. etype %s", etype);
+			return;
 		}
 		load_runner_func(L, "fsEventsEvent");
 		lua_pushstring(L, etype);
