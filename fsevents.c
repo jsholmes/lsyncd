@@ -200,8 +200,9 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 			case FSE_ARG_STRING :
 				switch(atype) {
 				case FSE_RENAME :
+				case FSE_EXCHANGE :
 					if (path) {
-						// for move events second string is target
+						// for move/exchange events second string is target
 						trg = (char *) &arg->data.str;
 					}
 					// fallthrough
@@ -218,6 +219,7 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 			case FSE_ARG_MODE :
 				switch(atype) {
 				case FSE_RENAME :
+				case FSE_EXCHANGE :
 				case FSE_CHOWN :
 				case FSE_CONTENT_MODIFIED :
 				case FSE_CREATE_FILE :
@@ -244,12 +246,20 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 	case FSE_DELETE :
 		etype = "Delete";
 		break;
+	case FSE_EXCHANGE:
+		etype = "Exchange";
+		break;
 	case FSE_RENAME :
 		etype = "Move";
 		break;
 	case FSE_CONTENT_MODIFIED :
 		etype = "Modify";
 		break;
+	}
+
+	if(atype == FSE_EXCHANGE && !path) {
+		// not sure what these are, but we're not interested in them
+		return;
 	}
 
 	if (etype) {
@@ -321,7 +331,7 @@ fsevents_ready(lua_State *L, struct observance *obs)
 				eventbufOff += ptrSize-(eventbufOff%ptrSize);
 			}
 			while (off < len && whichArg < FSE_MAX_ARGS) {
-				/* assign argument pointer to eventbuf based on 
+				/* assign argument pointer to eventbuf based on
 				   known current offset into eventbuf */
 				uint16_t argLen = 0;
 				event->args[whichArg] = (struct kfs_event_arg *) (eventbuf + eventbufOff);

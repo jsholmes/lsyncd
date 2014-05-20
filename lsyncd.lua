@@ -1634,6 +1634,9 @@ local Sync = ( function( )
 		end
 
 		self.processes[ pid ] = nil
+
+		-- force an update to the status file
+		StatusFile.write( nil )
 	end
 
 	--
@@ -2852,7 +2855,7 @@ local Fsevents = ( function( )
 
 			-- possibly change etype for this iteration only
 			local etyped = etype
-			if etyped == 'Move' then
+			if etyped == 'Move' or etyped == 'Exchange' then
 				if not relative2 then
 					log('Normal', 'Transformed Move to Delete for ', sync.config.name)
 					etyped = 'Delete'
@@ -2864,7 +2867,15 @@ local Fsevents = ( function( )
 				end
 			end
 
-			sync:delay( etyped, time, relative, relative2 )
+			if etyped == 'Exchange' then
+				sync:delay( 'Modify', time, relative, nil )
+				sync:delay( 'Modify', time, relative2, nil )
+			else
+				sync:delay( etyped, time, relative, relative2 )
+			end
+
+			-- force an update to the status file
+			StatusFile.write( nil )
 
 		until true end
 
@@ -3210,7 +3221,7 @@ end )( )
 --
 -- Writes a status report file at most every [statusintervall] seconds.
 --
-local StatusFile = ( function( )
+StatusFile = ( function( )
 
 
 	--
@@ -3248,7 +3259,7 @@ local StatusFile = ( function( )
 		--
 		-- takes care not write too often
 		--
-		if uSettings.statusInterval > 0 then
+		if timestamp ~= nil and uSettings.statusInterval > 0 then
 
 			-- already waiting?
 			if alarm and timestamp < alarm then
