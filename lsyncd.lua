@@ -59,6 +59,7 @@ local now       = now
 -- Predeclarations
 --
 local Monitors
+local StatusFile
 
 --
 -- Global: total number of processess running
@@ -81,6 +82,12 @@ local uSettings = { }
 -- ( pre Lsyncd 2.1 style )
 --
 local settingsSafe
+
+
+--
+-- true if user1 signal was just received
+--
+local user1
 
 --============================================================================
 -- Lsyncd Prototypes
@@ -1962,15 +1969,17 @@ local Sync = ( function( )
 				log('Alarm', 'at global process limit.')
 				return
 			end
-
+------
 			if self.delays.size < self.config.maxDelays then
 				-- time constrains are only concerned if not maxed
 				-- the delay FIFO already.
-				if d.alarm ~= true and timestamp < d.alarm then
+				if d.alarm ~= true and (timestamp < d.alarm and not user1) then
 					-- reached point in stack where delays are in future
 					return
 				end
 			end
+
+			user1 = false
 
 			if d.status == 'wait' then
 
@@ -4186,6 +4195,19 @@ function runner.term( sigcode )
 	)
 
 	lsyncdStatus = 'fade'
+
+end
+
+--
+-- Called by core on a user1 signal.
+--
+function runner.user1( )
+
+	log(
+		'Normal',
+		'--- USER1 signal, kicking off any waiting syncs ---'
+	)
+	user1 = true
 
 end
 

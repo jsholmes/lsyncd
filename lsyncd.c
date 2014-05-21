@@ -126,6 +126,7 @@ static bool first_time = true;
 */
 volatile sig_atomic_t hup  = 0;
 volatile sig_atomic_t term = 0;
+volatile sig_atomic_t user1 = 0;
 volatile sig_atomic_t sigcode = 0;
 int pidfile_fd = 0;
 
@@ -158,6 +159,10 @@ sig_handler( int sig )
 
 		case SIGHUP:
 			hup = 1;
+			return;
+
+		case SIGUSR1:
+			user1 = 1;
 			return;
 	}
 }
@@ -1158,7 +1163,7 @@ l_exec( lua_State *L )
 		// replaces midfile 0 chars by linefeed
 		size_t len = 0;
 		const char * cs = lua_tolstring( L, -1, &len );
-		char * s = s_calloc( len + 1, sizeof( char ) ); 
+		char * s = s_calloc( len + 1, sizeof( char ) );
 
 		for( i = 0; i < len; i++ )
 		{
@@ -2311,6 +2316,21 @@ masterloop(lua_State *L)
 			term = 2;
 		}
 
+		// reacts on USER1 signal
+		if( user1 == 1)
+		{
+			load_runner_func( L, "user1" );
+
+			if( lua_pcall( L, 0, 0, -2 ) )
+			{
+				exit( -1 );
+			}
+
+			lua_pop( L, 1 );
+
+			user1 = 0;
+		}
+
 		// lets the runner do stuff every cycle,
 		// like starting new processes, writing the statusfile etc.
 		load_runner_func( L, "cycle" );
@@ -2747,8 +2767,9 @@ main1( int argc, char *argv[] )
 		signal( SIGHUP,  sig_handler );
 		signal( SIGTERM, sig_handler );
 		signal( SIGINT,  sig_handler );
+		signal( SIGUSR1, sig_handler );
 	}
-
+//
 	// runs initializations from runner
 	// it will set the configuration and add watches
 	{
