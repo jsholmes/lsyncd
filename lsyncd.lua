@@ -2880,6 +2880,9 @@ local Fsevents = ( function( )
 				end
 			end
 
+			-- an 'Exchange' is an atomic switch between two files. since we
+			-- don't have a great primitive to encapsulate that action, we just
+			-- say both files were modified, so they both get updated out.
 			if etyped == 'Exchange' then
 				sync:delay( 'Modify', time, relative, nil )
 				sync:delay( 'Modify', time, relative2, nil )
@@ -3270,7 +3273,7 @@ StatusFile = ( function( )
 		)
 
 		--
-		-- takes care not write too often
+		-- takes care not write too often, unless we're forced
 		--
 		if timestamp ~= nil and uSettings.statusInterval > 0 then
 
