@@ -2728,7 +2728,9 @@ local Inotify = ( function( )
 					log(
 						'Normal',
 						'Transformed Move to Delete for ',
-						sync.config.name
+						sync.config.name,
+						' from ', path,
+						' to ', path2
 					)
 					etyped = 'Delete'
 				elseif not relative then
@@ -2737,7 +2739,9 @@ local Inotify = ( function( )
 					log(
 						'Normal',
 						'Transformed Move to Create for ',
-						sync.config.name
+						sync.config.name,
+						' from ', path,
+						' to ', path2
 					)
 					etyped = 'Create'
 				end
