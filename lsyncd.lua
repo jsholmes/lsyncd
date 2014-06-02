@@ -59,6 +59,7 @@ local now       = now
 -- Predeclarations
 --
 local Monitors
+local StatusFile
 
 --
 -- Global: total number of processess running
@@ -81,6 +82,12 @@ local uSettings = { }
 -- ( pre Lsyncd 2.1 style )
 --
 local settingsSafe
+
+
+--
+-- true if user1 signal was just received
+--
+local user1
 
 --============================================================================
 -- Lsyncd Prototypes
@@ -1634,6 +1641,9 @@ local Sync = ( function( )
 		end
 
 		self.processes[ pid ] = nil
+
+		-- force an update to the status file
+		StatusFile.write( nil )
 	end
 
 	--
@@ -1959,15 +1969,17 @@ local Sync = ( function( )
 				log('Alarm', 'at global process limit.')
 				return
 			end
-
+------
 			if self.delays.size < self.config.maxDelays then
 				-- time constrains are only concerned if not maxed
 				-- the delay FIFO already.
-				if d.alarm ~= true and timestamp < d.alarm then
+				if d.alarm ~= true and (timestamp < d.alarm and not user1) then
 					-- reached point in stack where delays are in future
 					return
 				end
 			end
+
+			user1 = false
 
 			if d.status == 'wait' then
 
@@ -2716,7 +2728,9 @@ local Inotify = ( function( )
 					log(
 						'Normal',
 						'Transformed Move to Delete for ',
-						sync.config.name
+						sync.config.name,
+						' from ', path,
+						' to ', path2
 					)
 					etyped = 'Delete'
 				elseif not relative then
@@ -2725,7 +2739,9 @@ local Inotify = ( function( )
 					log(
 						'Normal',
 						'Transformed Move to Create for ',
-						sync.config.name
+						sync.config.name,
+						' from ', path,
+						' to ', path2
 					)
 					etyped = 'Create'
 				end
@@ -2852,7 +2868,7 @@ local Fsevents = ( function( )
 
 			-- possibly change etype for this iteration only
 			local etyped = etype
-			if etyped == 'Move' then
+			if etyped == 'Move' or etyped == 'Exchange' then
 				if not relative2 then
 					log('Normal', 'Transformed Move to Delete for ', sync.config.name)
 					etyped = 'Delete'
@@ -2864,7 +2880,18 @@ local Fsevents = ( function( )
 				end
 			end
 
-			sync:delay( etyped, time, relative, relative2 )
+			-- an 'Exchange' is an atomic switch between two files. since we
+			-- don't have a great primitive to encapsulate that action, we just
+			-- say both files were modified, so they both get updated out.
+			if etyped == 'Exchange' then
+				sync:delay( 'Modify', time, relative, nil )
+				sync:delay( 'Modify', time, relative2, nil )
+			else
+				sync:delay( etyped, time, relative, relative2 )
+			end
+
+			-- force an update to the status file
+			StatusFile.write( nil )
 
 		until true end
 
@@ -3210,7 +3237,7 @@ end )( )
 --
 -- Writes a status report file at most every [statusintervall] seconds.
 --
-local StatusFile = ( function( )
+StatusFile = ( function( )
 
 
 	--
@@ -3246,9 +3273,9 @@ local StatusFile = ( function( )
 		)
 
 		--
-		-- takes care not write too often
+		-- takes care not write too often, unless we're forced
 		--
-		if uSettings.statusInterval > 0 then
+		if timestamp ~= nil and uSettings.statusInterval > 0 then
 
 			-- already waiting?
 			if alarm and timestamp < alarm then
@@ -4175,6 +4202,19 @@ function runner.term( sigcode )
 	)
 
 	lsyncdStatus = 'fade'
+
+end
+
+--
+-- Called by core on a user1 signal.
+--
+function runner.user1( )
+
+	log(
+		'Normal',
+		'--- USER1 signal, kicking off any waiting syncs ---'
+	)
+	user1 = true
 
 end
 

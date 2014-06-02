@@ -10,6 +10,7 @@ endif
 
 if FSEVENTS
 lsyncd_SOURCES += fsevents.c
+CFLAGS += -I xnu-2422.1.72
 endif
 
 lsyncd_LDADD = $(LUA_LIBS)

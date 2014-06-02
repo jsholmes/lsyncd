@@ -58,7 +58,7 @@
 
 /* OS 10.5 structuce */
 /* an event argument */
-struct kfs_event_arg {
+typedef struct kfs_event_arg {
 	/* argument type */
     u_int16_t  type;
 
@@ -77,7 +77,7 @@ struct kfs_event_arg {
         gid_t    gid;
         uint64_t timestamp;
     } data;
-};
+} __attribute__((packed)) kfs_event_arg_t;
 
 /* OS 10.5 structuce */
 /* an event */
@@ -90,7 +90,7 @@ struct kfs_event {
     pid_t    pid;
 
 	/* event arguments */
-    struct kfs_event_arg* args[FSE_MAX_ARGS];
+    kfs_event_arg_t args[FSE_MAX_ARGS];
 };
 
 /**
@@ -133,20 +133,14 @@ static int fsevents_fd = -1;
 /**
  * The read buffer
  */
-static size_t const readbuf_size = 131072;
+static size_t const readbuf_size = FSEVENT_BUFSIZ;
 static char * readbuf = NULL;
-
-/**
- * The event buffer
- */
-static size_t const eventbuf_size = FSEVENT_BUFSIZ;
-static char* eventbuf = NULL;
 
 /**
  * Handles one fsevents event
  */
 static void
-handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
+handle_event(lua_State *L, struct kfs_event *event)
 {
 	int32_t atype;
 	const char *path = NULL;
@@ -188,10 +182,11 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 	}
 
 	{
+
+
 		/* assigns the expected arguments */
-		int whichArg = 0;
-		while (whichArg < FSE_MAX_ARGS) {
-			struct kfs_event_arg * arg = event->args[whichArg++];
+		kfs_event_arg_t *arg = event->args;
+		for(;;) {
 			if (arg->type == FSE_ARG_DONE) {
 				break;
 			}
@@ -200,8 +195,9 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 			case FSE_ARG_STRING :
 				switch(atype) {
 				case FSE_RENAME :
+				case FSE_EXCHANGE :
 					if (path) {
-						// for move events second string is target
+						// for move/exchange events second string is target
 						trg = (char *) &arg->data.str;
 					}
 					// fallthrough
@@ -218,6 +214,7 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 			case FSE_ARG_MODE :
 				switch(atype) {
 				case FSE_RENAME :
+				case FSE_EXCHANGE :
 				case FSE_CHOWN :
 				case FSE_CONTENT_MODIFIED :
 				case FSE_CREATE_FILE :
@@ -229,6 +226,8 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 				}
 				break;
 			}
+			int eoff = sizeof(arg->type) + sizeof(arg->len) + arg->len;
+			arg = (kfs_event_arg_t *)((char *)arg + eoff);
 		}
 	}
 
@@ -244,6 +243,9 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 	case FSE_DELETE :
 		etype = "Delete";
 		break;
+	case FSE_EXCHANGE:
+		etype = "Exchange";
+		break;
 	case FSE_RENAME :
 		etype = "Move";
 		break;
@@ -255,10 +257,11 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 	if (etype) {
 		if (!path) {
 			printlogf(L, "Error", "Internal fail, fsevents, no path. etype %s", etype);
+			exit(1);
 			return;
 		}
 		if (isdir < 0) {
-			printlogf(L, "Error", "Internal fail, fsevents, neither dir nor file. etype %s", etype);
+			printlogf(L, "Error", "Internal fail, fsevents, neither dir nor file. etype %s %s -> %s", etype, path, trg==NULL ? "N/A" : trg);
 			return;
 		}
 		load_runner_func(L, "fsEventsEvent");
@@ -272,7 +275,7 @@ handle_event(lua_State *L, struct kfs_event *event, ssize_t mlen)
 			lua_pushnil(L);
 		}
 
-   	 	if (lua_pcall(L, 5, 0, -7)) {
+        if (lua_pcall(L, 5, 0, -7)) {
 			exit(-1); // ERRNO
 		}
 		lua_pop(L, 1);
@@ -307,53 +310,27 @@ fsevents_ready(lua_State *L, struct observance *obs)
 	{
 		int off = 0;
 		while (off < len && !hup && !term) {
-			/* deals with alignment issues on 64 bit by copying data bit by bit */
-			struct kfs_event* event = (struct kfs_event *) eventbuf;
-			event->type = *(int32_t*)(readbuf+off);
-			off += sizeof(int32_t);
-			event->pid = *(pid_t*)(readbuf+off);
-			off += sizeof(pid_t);
+			struct kfs_event* event = (struct kfs_event *)(readbuf + off);
+			off += sizeof(int32_t) + sizeof(pid_t); // type + pid
+			if(event->type == FSE_EVENTS_DROPPED) {
+				off += sizeof(u_int16_t); // FSE_ARG_DONE: sizeof(type)
+				handle_event(L, event);
+				continue;
+			}
+
 			/* arguments */
-			int whichArg = 0;
-			int eventbufOff = sizeof(struct kfs_event);
-			size_t ptrSize = sizeof(void*);
-			if ((eventbufOff % ptrSize) != 0) {
-				eventbufOff += ptrSize-(eventbufOff%ptrSize);
-			}
-			while (off < len && whichArg < FSE_MAX_ARGS) {
-				/* assign argument pointer to eventbuf based on 
-				   known current offset into eventbuf */
-				uint16_t argLen = 0;
-				event->args[whichArg] = (struct kfs_event_arg *) (eventbuf + eventbufOff);
-				/* copy type */
-				uint16_t argType = *(uint16_t*)(readbuf + off);
-				event->args[whichArg]->type = argType;
-				off += sizeof(uint16_t);
-				if (argType == FSE_ARG_DONE) {
-					/* done */
+			kfs_event_arg_t *kea = event->args;
+			while (off < len) {
+				if (kea->type == FSE_ARG_DONE) { // no more arguments
+					off += sizeof(u_int16_t);
 					break;
-				} else {
-					/* copy data length */
-					argLen = *(uint16_t *)(readbuf + off);
-					event->args[whichArg]->len = argLen;
-					off += sizeof(uint16_t);
-					/* copy data */
-					memcpy(&(event->args[whichArg]->data), readbuf + off, argLen);
-					  off += argLen;
 				}
-				/* makes sure alignment is correct for 64 bit systems */
-				size_t argStructLen = sizeof(uint16_t) + sizeof(uint16_t);
-				if ((argStructLen % ptrSize) != 0) {
-					argStructLen += ptrSize-(argStructLen % ptrSize);
-				}
-				argStructLen += argLen;
-				if ((argStructLen % ptrSize) != 0) {
-					argStructLen += ptrSize-(argStructLen % ptrSize);
-				}
-				eventbufOff += argStructLen;
-				whichArg++;
+
+				int eoff = sizeof(kea->type) + sizeof(kea->len) + kea->len;
+				off += eoff;
+				kea = (kfs_event_arg_t *)((char *)kea + eoff);
 			}
-			handle_event(L, event, len);
+			handle_event(L, event);
 		}
 	}
 }
@@ -371,8 +348,6 @@ fsevents_tidy(struct observance *obs)
 	close(fsevents_fd);
 	free(readbuf);
 	readbuf = NULL;
-	free(eventbuf);
-	eventbuf = NULL;
 }
 
 /**
@@ -429,7 +404,6 @@ open_fsevents(lua_State *L)
 		exit(-1); // ERRNO
 	}
 	readbuf = s_malloc(readbuf_size);
-	eventbuf = s_malloc(eventbuf_size);
 	// fd has been cloned, closes access fd
 	close(fd);
 	close_exec_fd(fsevents_fd);
