@@ -12,10 +12,6 @@
 
 #include "lsyncd.h"
 
-#ifndef HAVE_SYS_INOTIFY_H
-#  error Missing <sys/inotify.h>; supply kernel-headers and rerun configure.
-#endif
-
 #include <sys/stat.h>
 #include <sys/times.h>
 #include <sys/types.h>
@@ -143,7 +139,7 @@ l_addwatch( lua_State *L )
 
 		printlogf(
 			L, "Inotify",
-			"addwatch( %s )-> % d; err= %d : %s",
+			"addwatch( %s )-> %d; err= %d : %s",
 			path, wd, errno, strerror( errno )
 		);
 	}
